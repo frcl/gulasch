@@ -7,8 +7,10 @@ name = "pypi"
 aiohttp = "*"
 ipython = "*"
 python-dateutil = "*"
+tinydb = "*"
 
 [dev-packages]
+pytest = "*"
 
 [requires]
 python_version = "3.7"
