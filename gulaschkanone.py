@@ -8,8 +8,6 @@ from datetime import datetime, timedelta
 import aiohttp
 from aiohttp import web
 from dateutil import rrule
-# from tabulate import tabulate
-# from tinydb import TinyDB, Query
 
 
 __version__ = 'v0.1.0'
@@ -39,7 +37,7 @@ Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulaschkanone\033[
 """
 HELP_TEXT = """TODO
 """
-GULASCH_TEMPL = """\033[1m\033[33mNext talks from {now:%Y-%m-%d %H:%M}\033[0m
+GULASCH_TEMPL = """\033[1m\033[33mNext talks from {now:%Y-%m-%d %H:%M}\033[0m\n
 {table}
 """
 
@@ -100,36 +98,107 @@ def get_next_events(now, within_mins=60):
 
 
 def timetable(events):
-    by_location = {e['location']: e for e in events}
+    """
+    TODO: refactor, a lot
+    """
     start = min(e['start'] for e in events)
     end = max(e['start']+timedelta(minutes=e['duration']) for e in events)
 
-    col_width = 20
-    yield '|'.join([' '*8] + [f' {loc:<{col_width-2}} ' for loc in by_location]) + '|'
-    # TODO: fix loc order using DATA['location']
+    # container for timetable
+    lines = []
 
-    cards = [card(ev, col_width) for ev in by_location.values()]
+    locations = {e['location'] for e in events}
+    by_location = {loc: sorted(filter(lambda e: e['location'] == loc, events),
+                               key=lambda e: e['start'])
+                   for loc in locations}
+    current_events = {loc: None for loc in locations}
+    current_cards = {loc: None for loc in locations}
+
+    col_width = 20
+
+    # TODO
+    lines.append(
+        bytearray('|'.join([' '*8]
+                           + [f' {loc:<{col_width-2}} ' for loc in locations])
+                 + '|', 'utf8'))
+
+    def mins(n):
+        return timedelta(minutes=n)
+
     for dt in rrule.rrule(rrule.HOURLY, byminute=(0, 30),
                           dtstart=start, until=end):
-        yield dt.strftime('%H:%M') + ' ---' + '-'*(col_width+1)*len(by_location)
 
-        for td in map(lambda x: timedelta(minutes=x), range(5, 30, 5)):
-            time = dt + td
-            yield f'{time:%H:%M}'
+        ending_events = {loc: None for loc in locations}
+        for loc, event in current_events.items():
+            if event and dt <= event['start']+mins(event['duration']) <= dt+mins(30):
+                ending_events[loc] = event
+                current_events[loc] = None
+                current_cards[loc] = None
+
+        for event in events:
+            if dt <= event['start'] < dt+mins(30):
+                current_events[event['location']] = event
+                current_cards[event['location']] = card(event, col_width)
+
+        # print(current_events)
+
+        line = bytearray(dt.strftime('%H:%M') + ' ---', 'utf8')
+        for loc in locations:
+            if ending_events[loc]:
+                line[-1] = 43
+                line.extend(bytes('–'*col_width, 'utf8') + b'+')
+            elif current_events[loc] and \
+                    dt <= current_events[loc]['start'] < dt+mins(30):
+                line[-1] = 43
+                line.extend(bytes('–'*col_width, 'utf8') + b'+')
+            elif current_events[loc]:
+                line[-1] = 124
+                try:
+                    line.extend(bytes(next(current_cards[loc]), 'utf8'))
+                except StopIteration:
+                    line.extend(b' '*col_width)
+                line.extend(b'|')
+            else:
+                line.extend(b'-'*(col_width+1))
+
+
+        lines.append(line)
+
+        if dt+mins(30) > end:
+            break
+
+        for td in map(mins, range(5, 30, 5)):
+            # line = bytearray((dt+td).strftime('%H:%M') + '    ', 'utf8')
+            line = bytearray(b' '*9)
+            for loc in locations:
+                if current_cards[loc]:
+                    line[-1] = 124
+                    try:
+                        line.extend(bytes(next(current_cards[loc]), 'utf8'))
+                    except StopIteration:
+                        line.extend(b' '*col_width)
+                    line.extend(b'|')
+                else:
+                    line.extend(b' '*(col_width+1))
+
+
+            lines.append(line)
+
+    return b'\n'.join(lines).decode('utf8')
 
 
 def card(event, col_width):
-    yield ' '*20
+    yield ' '*col_width
 
     dur = event['duration']
-    if dur >= 30:
-        max_title_lines = 1
-        padding_lines = 1
     if dur >= 60:
         max_title_lines = 5
         padding_lines = 3
+    elif dur >= 30:
+        max_title_lines = 1
+        padding_lines = 1
 
-    text_width = col_width - 2
+    text_width = col_width - 4
     lines = textwrap.wrap(event['title'], text_width)
     if len(lines) > max_title_lines:
         last_line = lines[max_title_lines-1]
@@ -140,38 +209,44 @@ def card(event, col_width):
         try:
             yield f'  {lines[i]:<{col_width-4}}  '
         except IndexError:
-            yield ' '*20
+            yield ' '*col_width
 
     for _ in range(padding_lines):
-        yield ' '*20
+        yield ' '*col_width
 
     speaker_str = ', '.join(event['speakers'])
     if len(speaker_str) > col_width - 8:
         speaker_str = speaker_str[:col_width-9] + '…'
-    yield f'  {speaker_str:<{col_width-8}}  {event["language"]}  '
+    yield f'  {speaker_str:<{col_width-8}}  {event["language"]:<2}  '
 
-    yield ' '*20
+    yield ' '*col_width
 
 
-# TEST_EVENTS = [
-    # dict(id=1, start=datetime(2017, 5, 28, 23, 0), duration=60,
-         # location='room1', type='', language='en',
-         # title='Foo ads afsfsd afas aefeoc gwrsrgaw aeaflkvsjn smsdasajdnk adadf akdjn',
-         # subtitle='',
-         # do_not_record=True, speakers=['John'], links=[]),
+TEST_EVENTS = [
+    dict(id=1, start=datetime(2017, 5, 28, 23, 0), duration=60,
+         location='room1', type='', language='en',
+         title='Foo ads afsfsd afas aefeoc gwrsrgaw aeaflkvsjn smsdasajdnk adadf akdjn',
+         subtitle='',
+         do_not_record=True, speakers=['John'], links=[]),
     # dict(id=2, start=datetime(2017, 5, 29, 0, 34), duration=30,
          # location='room2', type='', language='de', title='Bar', subtitle='',
          # do_not_record=True, speakers=['Kevin'], links=[]),
+    dict(id=2, start=datetime(2017, 5, 29, 0, 30), duration=30,
+         location='room2', type='', language='de', title='Bar', subtitle='',
+         do_not_record=True, speakers=['Kevin'], links=[]),
     # dict(id=3, start=datetime(2017, 5, 28, 23, 42), duration=60,
          # location='room3', type='', language='de', title='Spam', subtitle='',
          # do_not_record=True, speakers=['F. Bar', 'S. Eggs'], links=[]),
-    # dict(id=4, start=datetime(2017, 5, 29, 1, 0), duration=60,
-         # location='room4', type='', language='en', title='Eggs', subtitle='',
-         # do_not_record=True, speakers=['Very very long name for a speaker'], links=[]),
-# ]
+    dict(id=3, start=datetime(2017, 5, 28, 23, 30), duration=60,
+         location='room3', type='', language='de', title='Spam', subtitle='',
+         do_not_record=True, speakers=['F. Bar', 'S. Eggs'], links=[]),
+    dict(id=4, start=datetime(2017, 5, 29, 1, 0), duration=60,
+         location='room4', type='', language='en', title='Eggs', subtitle='',
+         do_not_record=True, speakers=['Very very long name for a speaker'], links=[]),
+]
 
 
-# print('\n'.join(timetable(TEST_EVENTS)))
+# print(b'\n'.join(timetable(TEST_EVENTS)).decode('utf8'))
 # for ev in TEST_EVENTS:
     # print('\n'.join(card(ev, 20)))
     # print('-'*20)
@@ -200,18 +275,26 @@ def card(event, col_width):
 async def handle_gulasch_request(request):
     """entry point for /gulasch requests"""
     # now = datetime.now()
-    now = datetime.fromisoformat('2017-05-27T21:34:00+02:00')
-    style = request.query.get('style', 'list')
-    if style not in ('list',):
+    now = datetime.fromisoformat('2017-05-27T17:34:00+02:00')
+    style = request.query.get('style', 'timetable')
+    if style not in ('list', 'timetable'):
         resp = web.Response(text=f'ERROR: unknown style "{style}"\n',
                             content_type='text/plain')
     else:
         events = sorted(get_next_events(now, within_mins=120),
                         key=lambda x: x['start'])
-        table_lines = ['* \033[33m{:%H:%M}\033[0m {} - {}\n'
-                       .format(ev['start'], ev['title'], ev['subtitle'])
-                       for ev in events]
-        resp = web.Response(text=GULASCH_TEMPL.format(lines), content_type='text/plain')
+
+        if style == 'timetable':
+            table = timetable(events)
+            resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
+                                content_type='text/plain')
+        elif style == 'list':
+            table = ''.join('* \033[33m{:%H:%M}\033[0m {} - {}\n'
+                              .format(ev['start'], ev['title'], ev['subtitle'])
+                              for ev in events)
+            resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
+                                content_type='text/plain')
+
     return resp
 
 
@@ -241,13 +324,13 @@ async def start_background_tasks(app):
     # return web.Response(text=pprint.pprint(DATA))
 
 
-# if __name__ == '__main__':
-    # with open('data.json') as jfile:
-        # DATA['events'] = normalize(json.load(jfile))
-    # app = web.Application()
-    # app.on_startup.append(start_background_tasks)
-    # app.add_routes([web.get('/help', usage),
-                    # web.get('/meta', handle_meta_request),
-                    # # web.get('/all', handle_all_request),
-                    # web.get('/', handle_gulasch_request)])
-    # web.run_app(app)
+if __name__ == '__main__':
+    with open('data.json') as jfile:
+        DATA['events'] = normalize(json.load(jfile))
+    app = web.Application()
+    app.on_startup.append(start_background_tasks)
+    app.add_routes([web.get('/help', usage),
+                    web.get('/meta', handle_meta_request),
+                    # web.get('/all', handle_all_request),
+                    web.get('/', handle_gulasch_request)])
+    web.run_app(app)
