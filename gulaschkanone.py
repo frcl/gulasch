@@ -339,6 +339,7 @@ if __name__ == '__main__':
     import argparse
     argp = argparse.ArgumentParser()
     argp.add_argument('-f', '--data-file', default='data.json')
+    argp.add_argument('-p', '--port', default=80)
     args = argp.parse_args()
     with open(args.data_file) as jfile:
         DATA['locations'], DATA['events'] = normalize(json.load(jfile))
@@ -348,4 +349,4 @@ if __name__ == '__main__':
                     web.get('/gulasch/meta', handle_meta_request),
                     web.get('/gulasch/', handle_gulasch_request),
                     web.get('/gulasch', handle_gulasch_request)])
-    web.run_app(app)
+    web.run_app(app, port=args.port)
