@@ -4,6 +4,7 @@ import json  # for decoding 'fahrplan.json'
 import sys  # for meta information
 import textwrap  # for wraping text in event cards
 from datetime import datetime, timedelta
+from typing import Dict, Generator, List
 
 import aiohttp
 from aiohttp import web
@@ -47,21 +48,36 @@ GULASCH_TEMPL = """\033[1m\033[33mNext talks from {now:%Y-%m-%d %H:%M}\033[0m\n
 # ====================
 
 
+class Event:
+
+    def __init__(self, data):
+        self.data = data
+        self.start = data['start']
+        self.end = self.start + timedelta(minutes=data['duration'])
+        # make data json serializable
+        self.data['start'] = self.start.isoformat()
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def is_running_at(self, dt):
+        return self.start < dt < self.end
+
+
 def normalize(data):
     by_day = data['schedule']['conference']['days']
-    # locations = set()
+    locations = by_day[0]['rooms'].keys()
     # speakers = set()
     events = []
 
     for day in by_day:
-        for loc_name, ev_in_loc in day['rooms'].items():
-            # locations.union(loc_name)
-            for event in ev_in_loc:
-                events.append(normalize_event(event))
+        for loc_events in day['rooms'].values():
+            for event in loc_events:
+                events.append(Event(normalize_event(event)))
                 # speakers.union(event['persons'])
 
     # return locations, speakers, events
-    return events
+    return locations, events
 
 
 def normalize_event(event):
@@ -93,163 +109,151 @@ def parse_duration(dur_str):
 
 def get_next_events(now, within_mins=60):
     for event in DATA['events']:
-        if timedelta(0) <= event['start']-now <= timedelta(minutes=within_mins):
+        if timedelta(0) <= event.start-now <= timedelta(minutes=within_mins):
             yield event
 
 
-def timetable(events):
-    """
-    TODO: refactor, a lot
-    """
-    start = min(e['start'] for e in events)
-    end = max(e['start']+timedelta(minutes=e['duration']) for e in events)
+def timetable(events: List[Dict[str, object]], col_width: int = 20) -> str:
+    """Create a timetable string for events"""
+    if not events:
+        return 'Currently no upcoming events'
 
-    # container for timetable
-    lines = []
+    global_start = min(e.start for e in events)
+    global_end = max(e.end for e in events)
 
-    locations = {e['location'] for e in events}
-    by_location = {loc: sorted(filter(lambda e: e['location'] == loc, events),
-                               key=lambda e: e['start'])
-                   for loc in locations}
-    current_events = {loc: None for loc in locations}
-    current_cards = {loc: None for loc in locations}
+    # this puts uniq locations in canonical order
+    event_locations = {e['location'] for e in events}
+    locations = [loc for loc in DATA['locations'] if loc in event_locations]
 
-    col_width = 20
+    cards_by_id = {e['id']: card(e, col_width) for e in events}
+    events_by_location = {loc: [e for e in events if e['location'] == loc]
+                          for loc in locations}
 
-    # TODO
-    lines.append(
-        bytearray('|'.join([' '*8]
-                           + [f' {loc:<{col_width-2}} ' for loc in locations])
-                 + '|', 'utf8'))
+    tick_times = rrule.rrule(rrule.HOURLY, byminute=(0, 30),
+                             dtstart=global_start, until=global_end)
 
-    def mins(n):
-        return timedelta(minutes=n)
+    lines = ['        |' + '|'.join(f' {loc:<{col_width-2}} ' for loc in locations)]
 
-    for dt in rrule.rrule(rrule.HOURLY, byminute=(0, 30),
-                          dtstart=start, until=end):
+    UD = '│'
+    LR = '─'
+    seperators = {
+        (False, True, True, False): '┬',
+        (True, False, False, True): '┴',
+        (False, False, True, True): '┤',
+        (True, True, False, False): '├',
+        (False, True, False, True): '┼',
+        (True, False, True, False): '┼',
+    }
 
-        ending_events = {loc: None for loc in locations}
-        for loc, event in current_events.items():
-            if event and dt <= event['start']+mins(event['duration']) <= dt+mins(30):
-                ending_events[loc] = event
-                current_events[loc] = None
-                current_cards[loc] = None
+    def get_seperator(*args):
+        """(upright, downright, downleft, upleft): Tuple[bool] -> seperator: str"""
+        if sum(args) >= 3:
+            return '┼'
+        elif sum(args) == 1:
+            return ('└', '┌', '┐', '┘')[args.index(True)]
+        else:
+            return seperators[tuple(args)]
 
-        for event in events:
-            if dt <= event['start'] < dt+mins(30):
-                current_events[event['location']] = event
-                current_cards[event['location']] = card(event, col_width)
+    for dt in rrule.rrule(rrule.HOURLY, byminute=range(0, 60, 5),
+                          dtstart=global_start, until=global_end):
+        line_parts = [f'{dt:%H:%M} --' if dt in tick_times else ' '*8]
+        fill_char = '-' if dt in tick_times else ' '
 
-        # print(current_events)
+        starting_events = {loc: next((e for e in events_by_location[loc] if e.start == dt), None)
+                           for loc in locations}
+        running_events = {loc: next((e for e in events_by_location[loc] if e.is_running_at(dt)), None)
+                          for loc in locations}
+        ending_events = {loc: next((e for e in events_by_location[loc] if e.end == dt), None)
+                         for loc in locations}
 
-        line = bytearray(dt.strftime('%H:%M') + ' ---', 'utf8')
-        for loc in locations:
-            if ending_events[loc]:
-                line[-1] = 43
-                line.extend(bytes('–'*col_width, 'utf8') + b'+')
-            elif current_events[loc] and \
-                    dt <= current_events[loc]['start'] < dt+mins(30):
-                line[-1] = 43
-                line.extend(bytes('–'*col_width, 'utf8') + b'+')
-            elif current_events[loc]:
-                line[-1] = 124
-                try:
-                    line.extend(bytes(next(current_cards[loc]), 'utf8'))
-                except StopIteration:
-                    line.extend(b' '*col_width)
-                line.extend(b'|')
+        loc = locations[0]
+        start, run, end = starting_events[loc], running_events[loc], ending_events[loc]
+
+        if start or end:
+            line_parts.append(get_seperator(bool(end), bool(start), False, False) +LR*col_width)
+        elif run:
+            line_parts.append(UD+next(cards_by_id[run['id']]))
+        else:
+            line_parts.append(fill_char*(col_width+1))
+
+        for loc1, loc2 in zip(locations[:-1], locations[1:]):
+            start1, run1, end1 = starting_events[loc1], running_events[loc1], ending_events[loc1]
+            start2, run2, end2 = starting_events[loc2], running_events[loc2], ending_events[loc2]
+
+            start_end = [end2, start2, start1, end1]
+
+            if run1 and (start2 or end2):
+                line_parts.append('├')
+            elif run2 and (start1 or end1):
+                line_parts.append('┤')
+            elif any(start_end):
+                line_parts.append(get_seperator(*map(bool, start_end)))
+            elif run1 or run2:
+                line_parts.append(UD)
             else:
-                line.extend(b'-'*(col_width+1))
+                line_parts.append(fill_char)
+
+            if run2:
+                line_parts.append(next(cards_by_id[run2['id']]))
+            elif start2 or end2:
+                line_parts.append(LR*col_width)
+            else:
+                line_parts.append(fill_char*col_width)
+
+        loc = locations[-1]
+        start, run, end = starting_events[loc], running_events[loc], ending_events[loc]
+
+        if start or end:
+            line_parts.append(get_seperator(False, False, bool(start), bool(end)))
+        elif run:
+            line_parts.append(UD)
+        else:
+            line_parts.append(fill_char)
+
+        lines.append(''.join(line_parts))
+
+    return '\n'.join(lines)
 
 
-        lines.append(line)
+def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]:
+    """Generate the lines of an event card
 
-        if dt+mins(30) > end:
-            break
-
-        for td in map(mins, range(5, 30, 5)):
-            # line = bytearray((dt+td).strftime('%H:%M') + '    ', 'utf8')
-            line = bytearray(b' '*9)
-            for loc in locations:
-                if current_cards[loc]:
-                    line[-1] = 124
-                    try:
-                        line.extend(bytes(next(current_cards[loc]), 'utf8'))
-                    except StopIteration:
-                        line.extend(b' '*col_width)
-                    line.extend(b'|')
-                else:
-                    line.extend(b' '*(col_width+1))
-
-
-            lines.append(line)
-
-    return b'\n'.join(lines).decode('utf8')
-
-
-def card(event, col_width):
-    yield ' '*col_width
-
-    dur = event['duration']
-    if dur >= 60:
-        max_title_lines = 5
-        padding_lines = 3
-    elif dur >= 30:
-        max_title_lines = 1
-        padding_lines = 1
-
+    Arguments:
+        event (Dict[str, object]): The event to display, used values are
+            'title', 'duration', 'speakers' and 'language'
+        col_width (int): The length each line should have
+    """
+    empty_line = ' '*col_width
     text_width = col_width - 4
-    lines = textwrap.wrap(event['title'], text_width)
-    if len(lines) > max_title_lines:
-        last_line = lines[max_title_lines-1]
-        if len(last_line) > col_width - 4:
-            lines[max_title_lines-1] = last_line[:col_width-5] + '…'
+    titlelines = textwrap.wrap(event['title'], text_width)
+    height = event['duration']//5 - 1
 
-    for i in range(max_title_lines):
-        try:
-            yield f'  {lines[i]:<{col_width-4}}  '
-        except IndexError:
-            yield ' '*col_width
+    # shorten title if space is scarce
+    if height <= 11:
+        if height <= 5:
+            max_title_lines = 1
+        else:
+            max_title_lines = 5
+        if len(titlelines) > max_title_lines:
+            titlelines = titlelines[:max_title_lines]
+            lastln = titlelines[-1]
+            if len(lastln) > text_width:
+                lastln = lastln[:text_width] + '…'
 
-    for _ in range(padding_lines):
-        yield ' '*col_width
-
+    # fit speaker(s) and language in one line
     speaker_str = ', '.join(event['speakers'])
-    if len(speaker_str) > col_width - 8:
-        speaker_str = speaker_str[:col_width-9] + '…'
-    yield f'  {speaker_str:<{col_width-8}}  {event["language"]:<2}  '
+    if len(speaker_str) > text_width - 4:
+        speaker_str = speaker_str[:text_width-5] + '…'
 
-    yield ' '*col_width
-
-
-TEST_EVENTS = [
-    dict(id=1, start=datetime(2017, 5, 28, 23, 0), duration=60,
-         location='room1', type='', language='en',
-         title='Foo ads afsfsd afas aefeoc gwrsrgaw aeaflkvsjn smsdasajdnk adadf akdjn',
-         subtitle='',
-         do_not_record=True, speakers=['John'], links=[]),
-    # dict(id=2, start=datetime(2017, 5, 29, 0, 34), duration=30,
-         # location='room2', type='', language='de', title='Bar', subtitle='',
-         # do_not_record=True, speakers=['Kevin'], links=[]),
-    dict(id=2, start=datetime(2017, 5, 29, 0, 30), duration=30,
-         location='room2', type='', language='de', title='Bar', subtitle='',
-         do_not_record=True, speakers=['Kevin'], links=[]),
-    # dict(id=3, start=datetime(2017, 5, 28, 23, 42), duration=60,
-         # location='room3', type='', language='de', title='Spam', subtitle='',
-         # do_not_record=True, speakers=['F. Bar', 'S. Eggs'], links=[]),
-    dict(id=3, start=datetime(2017, 5, 28, 23, 30), duration=60,
-         location='room3', type='', language='de', title='Spam', subtitle='',
-         do_not_record=True, speakers=['F. Bar', 'S. Eggs'], links=[]),
-    dict(id=4, start=datetime(2017, 5, 29, 1, 0), duration=60,
-         location='room4', type='', language='en', title='Eggs', subtitle='',
-         do_not_record=True, speakers=['Very very long name for a speaker'], links=[]),
-]
+    yield empty_line
+    for line in titlelines:
+        yield f'  {line:<{text_width}}  '
+    for _ in range(height-len(titlelines)-3):
+        yield empty_line
+    yield f'  {speaker_str:<{text_width-4}}  {event["language"]:<2}  '
+    yield empty_line
 
 
-# print(b'\n'.join(timetable(TEST_EVENTS)).decode('utf8'))
-# for ev in TEST_EVENTS:
-    # print('\n'.join(card(ev, 20)))
-    # print('-'*20)
 # =======================
 # Updata Mechanism (TODO)
 # =======================
@@ -275,25 +279,26 @@ TEST_EVENTS = [
 async def handle_gulasch_request(request):
     """entry point for /gulasch requests"""
     # now = datetime.now()
-    now = datetime.fromisoformat('2017-05-27T17:34:00+02:00')
-    style = request.query.get('style', 'timetable')
-    if style not in ('list', 'timetable'):
-        resp = web.Response(text=f'ERROR: unknown style "{style}"\n',
-                            content_type='text/plain')
-    else:
-        events = sorted(get_next_events(now, within_mins=120),
-                        key=lambda x: x['start'])
+    now = datetime.fromisoformat('2019-05-30T19:34:00+02:00')
+    display_format = request.query.get('format', 'timetable')
+    events = sorted(get_next_events(now, within_mins=120),
+                    key=lambda x: x.start)
 
-        if style == 'timetable':
-            table = timetable(events)
-            resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
-                                content_type='text/plain')
-        elif style == 'list':
-            table = ''.join('* \033[33m{:%H:%M}\033[0m {} - {}\n'
-                              .format(ev['start'], ev['title'], ev['subtitle'])
-                              for ev in events)
-            resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
-                                content_type='text/plain')
+    if display_format == 'timetable':
+        table = timetable(events)
+        resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
+                            content_type='text/plain')
+    elif display_format == 'list':
+        table = ''.join('* \033[33m{:%H:%M}\033[0m {} - {}\n'
+                          .format(ev.start, ev['title'], ev['subtitle'])
+                          for ev in events)
+        resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
+                            content_type='text/plain')
+    elif display_format == 'json':
+        resp = web.json_response([e.data for e in events])
+    else:
+        resp = web.Response(text=f'ERROR: unknown format "{display_format}"\n',
+                            content_type='text/plain')
 
     return resp
 
@@ -318,15 +323,9 @@ async def start_background_tasks(app):
     pass
 
 
-# tmp
-# async def handle_all_request(request):
-    # import pprint
-    # return web.Response(text=pprint.pprint(DATA))
-
-
 if __name__ == '__main__':
-    with open('data.json') as jfile:
-        DATA['events'] = normalize(json.load(jfile))
+    with open('gpn19.json') as jfile:
+        DATA['locations'], DATA['events'] = normalize(json.load(jfile))
     app = web.Application()
     app.on_startup.append(start_background_tasks)
     app.add_routes([web.get('/help', usage),
