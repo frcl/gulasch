@@ -7,11 +7,12 @@ from datetime import datetime, timedelta
 from typing import Dict, Generator, List
 
 import aiohttp
+import pytz
 from aiohttp import web
 from dateutil import rrule
 
 
-__version__ = 'v0.1.0'
+__version__ = 'v0.2.0'
 
 
 # =========
@@ -19,8 +20,9 @@ __version__ = 'v0.1.0'
 # =========
 
 
-FAHRPLAN_JSON_URL = 'http://localhost:9000/fahrplan17.json'
 # FAHRPLAN_JSON_URL = 'https://entropia.de/GPN17:Fahrplan:JSON?action=raw'
+GPN_START = datetime.fromisoformat('2019-05-30T16:00:00+02:00')
+CEST = pytz.timezone('Europe/Berlin')
 
 # LOCK = asyncio.Lock()
 DATA = {'events': [],
@@ -81,6 +83,10 @@ def normalize(data):
 
 
 def normalize_event(event):
+    # fix overlapping opening talks
+    if int(event['id']) == 11:
+        event['duration'] = '00:30'
+
     return dict(
         id=int(event['id']),
         start=datetime.fromisoformat(event['date']),
@@ -237,8 +243,10 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
         if len(titlelines) > max_title_lines:
             titlelines = titlelines[:max_title_lines]
             lastln = titlelines[-1]
-            if len(lastln) > text_width:
-                lastln = lastln[:text_width] + '…'
+            if len(lastln) == text_width:
+                titlelines[-1] = lastln[:text_width-1] + '…'
+            else:
+                titlelines[-1] = lastln + '…'
 
     # fit speaker(s) and language in one line
     speaker_str = ', '.join(event['speakers'])
@@ -278,8 +286,9 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
 
 async def handle_gulasch_request(request):
     """entry point for /gulasch requests"""
-    # now = datetime.now()
-    now = datetime.fromisoformat('2019-05-30T19:34:00+02:00')
+    now = datetime.now(tz=CEST)
+    if now < GPN_START:
+        now = GPN_START
     display_format = request.query.get('format', 'timetable')
     events = sorted(get_next_events(now, within_mins=120),
                     key=lambda x: x.start)
@@ -289,9 +298,12 @@ async def handle_gulasch_request(request):
         resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
                             content_type='text/plain')
     elif display_format == 'list':
-        table = ''.join('* \033[33m{:%H:%M}\033[0m {} - {}\n'
-                          .format(ev.start, ev['title'], ev['subtitle'])
-                          for ev in events)
+        table = ''.join('* \033[33m{:%H:%M}\033[0m {}{}, {}; {}\n'
+                        .format(ev.start, ev['title'],
+                                ' - '+ev['subtitle'] if ev['subtitle'] else '',
+                                ', '.join(ev['speakers']),
+                                ev['language'])
+                        for ev in events)
         resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
                             content_type='text/plain')
     elif display_format == 'json':
@@ -324,12 +336,16 @@ async def start_background_tasks(app):
 
 
 if __name__ == '__main__':
-    with open('gpn19.json') as jfile:
+    import argparse
+    argp = argparse.ArgumentParser()
+    argp.add_argument('-f', '--data-file', default='data.json')
+    args = argp.parse_args()
+    with open(args.data_file) as jfile:
         DATA['locations'], DATA['events'] = normalize(json.load(jfile))
     app = web.Application()
     app.on_startup.append(start_background_tasks)
-    app.add_routes([web.get('/help', usage),
-                    web.get('/meta', handle_meta_request),
-                    # web.get('/all', handle_all_request),
-                    web.get('/', handle_gulasch_request)])
+    app.add_routes([web.get('/gulasch/help', usage),
+                    web.get('/gulasch/meta', handle_meta_request),
+                    web.get('/gulasch/', handle_gulasch_request),
+                    web.get('/gulasch', handle_gulasch_request)])
     web.run_app(app)
