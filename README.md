@@ -2,7 +2,7 @@
 
 View the Fahrplan for #gpn19 from your terminal. Type
 
-	$ curl localhost:8080/gulasch
+	$ curl frcl.de/gulasch
 
 and get
 
