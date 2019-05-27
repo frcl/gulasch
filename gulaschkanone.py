@@ -40,7 +40,7 @@ Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulasch\033[0m
 """
 HELP_TEXT = """TODO
 """
-GULASCH_TEMPL = """\033[33;1mNext talks from {now:%Y-%m-%d %H:%M}\033[0m\n
+GULASCH_TEMPL = """\033[33;1mNext talks from {start:%Y-%m-%d %H:%M}\033[0m\n
 {table}
 """
 
@@ -330,7 +330,7 @@ async def handle_gulasch_request(request):
 
     if display_format == 'timetable':
         table = timetable(events)
-        resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
+        resp = web.Response(text=GULASCH_TEMPL.format(start=from_dt, table=table),
                             content_type='text/plain')
     elif display_format == 'list':
         table = ''.join('* \033[33m{:%H:%M}\033[0m {}{}, {}; {}\n'
@@ -339,7 +339,7 @@ async def handle_gulasch_request(request):
                                 ', '.join(ev['speakers']),
                                 ev['language'])
                         for ev in events)
-        resp = web.Response(text=GULASCH_TEMPL.format(now=now, table=table),
+        resp = web.Response(text=GULASCH_TEMPL.format(start=from_dt, table=table),
                             content_type='text/plain')
     elif display_format == 'json':
         resp = web.json_response([e.data for e in events])
