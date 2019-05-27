@@ -9,7 +9,7 @@ from typing import Dict, Generator, List
 import aiohttp
 import pytz
 from aiohttp import web
-from dateutil import rrule
+from dateutil import rrule, parser
 
 
 __version__ = 'v0.2.1'
@@ -32,15 +32,15 @@ META_DATA = {'last_update': None,
              'version': __version__,
              'py_version': sys.version[:5],
              'aio_version': aiohttp.__version__}
-META_TEMPL = """\033[1m\033[33mgulaschkanone {version}\033[0m
+META_TEMPL = """\033[33;1mgulaschkanone {version}\033[0m
 Running on Python {py_version} with aiohttp {aio_version}.
 The last update was at {last_update}.
 For usage info see \033[33mhttp://frcl.de/gulasch/help\033[0m
-Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulaschkanone\033[0m
+Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulasch\033[0m
 """
 HELP_TEXT = """TODO
 """
-GULASCH_TEMPL = """\033[1m\033[33mNext talks from {now:%Y-%m-%d %H:%M}\033[0m\n
+GULASCH_TEMPL = """\033[33;1mNext talks from {now:%Y-%m-%d %H:%M}\033[0m\n
 {table}
 """
 
@@ -255,10 +255,11 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
 
     yield empty_line
     for line in titlelines:
-        yield f'  {line:<{text_width}}  '
+        yield f'  \033[1m{line:<{text_width}}\033[0m  '
     for _ in range(height-len(titlelines)-3):
         yield empty_line
-    yield f'  {speaker_str:<{text_width-4}}  {event["language"]:<2}  '
+    yield (f'  \033[33m{speaker_str:<{text_width-4}}\033[0m'
+           f'  \033[38;5;246m{event["language"]:<2}\033[0m  ')
     yield empty_line
 
 
@@ -309,7 +310,7 @@ async def handle_gulasch_request(request):
     elif display_format == 'json':
         resp = web.json_response([e.data for e in events])
     else:
-        resp = web.Response(text=f'ERROR: unknown format "{display_format}"\n',
+        resp = web.Response(text=f'\033[31mERROR: unknown format "{display_format}"\033[0m\n',
                             content_type='text/plain')
 
     return resp
