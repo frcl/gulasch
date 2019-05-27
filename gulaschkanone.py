@@ -1,6 +1,7 @@
 # pylint: disable=import-error
 import asyncio
 import json  # for decoding 'fahrplan.json'
+import re
 import sys  # for meta information
 import textwrap  # for wraping text in event cards
 from datetime import datetime, timedelta
@@ -12,7 +13,7 @@ from aiohttp import web
 from dateutil import rrule, parser
 
 
-__version__ = 'v0.3.0'
+__version__ = 'v0.3.1'
 
 
 # =========
@@ -38,10 +39,35 @@ The last update was at {last_update}.
 For usage info see \033[33mhttp://frcl.de/gulasch/help\033[0m
 Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulasch\033[0m
 """
-HELP_TEXT = """TODO
+HELP_TEXT = """Basic usage:
+
+    curl frcl.de/gulasch
+
+Different formats:
+
+    frcl.de/gulasch?format=list
+    frcl.de/gulasch?format=json
+
+Different start time:
+
+    frcl.de/gulasch?from=2019-05-31T12:00
+
+Different time span:
+
+    frcl.de/gulasch?within=4h
+    frcl.de/gulasch?within=30min
+
+Combination:
+
+    frcl.de/gulasch?from=2019-05-31T12:00&within=12h
+
+You may need to escape ? and &.
 """
 GULASCH_TEMPL = """\033[33;1mNext talks from {start:%Y-%m-%d %H:%M}\033[0m\n
 {table}
+
+For usage info see \033[33mhttp://frcl.de/gulasch/help\033[0m
+Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulasch\033[0m
 """
 
 
