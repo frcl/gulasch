@@ -285,14 +285,48 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
 # ================
 
 
+def err_repsonse(msg):
+    return web.Response(text=f'\033[31mERROR: {msg}\033[0m\n',
+                        content_type='text/plain')
+
+
+def parse_delta(td_str):
+    if td_str.endswith('h'):
+        return int(td_str[:-1])*60
+    elif td_str.endswith('min'):
+        return int(td_str[:-3])
+    elif td_str.endswith('m'):
+        return int(td_str[:-3])
+    else:
+        raise ValueError()
+
+
 async def handle_gulasch_request(request):
     """entry point for /gulasch requests"""
     now = datetime.now(tz=CEST)
     if now < GPN_START:
         now = GPN_START
-    display_format = request.query.get('format', 'timetable')
-    events = sorted(get_next_events(now, within_mins=120),
+
+    from_str = request.query.get('from')
+    if from_str:
+        try:
+            from_dt = parser.parse(from_str, default=now)
+        except ValueError:
+            return err_repsonse(f'"{from_str}" is not a time stamp')
+
+    else:
+        from_dt = now
+
+    within_str = request.query.get('within', '2h')
+    try:
+        within_mins = parse_delta(within_str)
+    except ValueError:
+        return err_repsonse(f'"{within_str}" is not a time delta')
+
+    events = sorted(get_next_events(from_dt, within_mins=within_mins),
                     key=lambda x: x.start)
+
+    display_format = request.query.get('format', 'timetable')
 
     if display_format == 'timetable':
         table = timetable(events)
@@ -310,8 +344,7 @@ async def handle_gulasch_request(request):
     elif display_format == 'json':
         resp = web.json_response([e.data for e in events])
     else:
-        resp = web.Response(text=f'\033[31mERROR: unknown format "{display_format}"\033[0m\n',
-                            content_type='text/plain')
+        resp = err_repsonse(f'unknown format "{display_format}"')
 
     return resp
 
