@@ -12,7 +12,7 @@ from aiohttp import web
 from dateutil import rrule, parser
 
 
-__version__ = 'v0.2.1'
+__version__ = 'v0.3.0'
 
 
 # =========
