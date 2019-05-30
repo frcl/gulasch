@@ -1,16 +1,16 @@
 # pylint: disable=import-error
 import asyncio
 import json  # for decoding 'fahrplan.json'
-import re
+import random # for randomizing time between updates
 import sys  # for meta information
 import textwrap  # for wraping text in event cards
 from datetime import datetime, timedelta
 from typing import Dict, Generator, List
 
-import aiohttp
 import pytz
-from aiohttp import web
 from dateutil import rrule, parser
+import aiohttp
+from aiohttp import web, ClientSession
 
 
 __version__ = 'v0.3.1'
@@ -21,7 +21,7 @@ __version__ = 'v0.3.1'
 # =========
 
 
-# FAHRPLAN_JSON_URL = 'https://entropia.de/GPN17:Fahrplan:JSON?action=raw'
+FAHRPLAN_JSON_URL = 'https://entropia.de/GPN19:Fahrplan:JSON?action=raw'
 GPN_START = datetime.fromisoformat('2019-05-30T16:00:00+02:00')
 CEST = pytz.timezone('Europe/Berlin')
 
@@ -109,10 +109,6 @@ def normalize(data):
 
 
 def normalize_event(event):
-    # fix overlapping opening talks
-    if int(event['id']) == 11:
-        event['duration'] = '00:30'
-
     return dict(
         id=int(event['id']),
         start=datetime.fromisoformat(event['date']),
@@ -294,16 +290,29 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
 # =======================
 
 
-# async def update(now):
-    # pass
+async def update():
+    now = datetime.now()
+    # get json
+    async with ClientSession() as session:
+        async with session.get(FAHRPLAN_JSON_URL) as resp:
+            if resp.status < 300:
+                json_str = await resp.read()
+            else:
+                return # TODO: handle
 
+    data = json.loads(json_str)
 
-# async def check_for_updates(app):
-    # """background task for regularly calling update"""
-    # await update(datetime.now())
-    # for next_dt in rrule.rrule(rrule.DAILY, byhour=0):
-        # await asyncio.sleep((next_dt-datetime.now()).seconds)
-        # await update(next_dt)
+    DATA['locations'], DATA['events'] = normalize(data)
+    META_DATA['last_update'] = now.isoformat()
+
+async def check_for_updates(app):
+    """background task for regularly calling update"""
+    await update()
+    while True:
+        # wait for a random amound of minutes
+        wait_mins = random.randint(30, 60)
+        await asyncio.sleep(wait_mins*60)
+        await update()
 
 
 # ================
@@ -390,19 +399,18 @@ async def usage(request):
 
 
 async def start_background_tasks(app):
-    # at the moment there are no updates
-    # app['update_checker'] = app.loop.create_task(check_for_updates(app))
-    pass
+    app['update_checker'] = app.loop.create_task(check_for_updates(app))
 
 
 if __name__ == '__main__':
     import argparse
     argp = argparse.ArgumentParser()
-    argp.add_argument('-f', '--data-file', default='data.json')
+    # argp.add_argument('-f', '--data-file', default='data.json')
     argp.add_argument('-p', '--port', default=80)
     args = argp.parse_args()
-    with open(args.data_file) as jfile:
-        DATA['locations'], DATA['events'] = normalize(json.load(jfile))
+    # with open(args.data_file) as jfile:
+        # DATA['locations'], DATA['events'] = normalize(json.load(jfile))
+
     app = web.Application()
     app.on_startup.append(start_background_tasks)
     app.add_routes([web.get('/gulasch/help', usage),
