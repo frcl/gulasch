@@ -291,7 +291,7 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
 
 
 async def update():
-    now = datetime.now()
+    now = datetime.now(tz=CEST)
     # get json
     async with ClientSession() as session:
         async with session.get(FAHRPLAN_JSON_URL) as resp:
@@ -304,6 +304,7 @@ async def update():
 
     DATA['locations'], DATA['events'] = normalize(data)
     META_DATA['last_update'] = now.isoformat()
+
 
 async def check_for_updates(app):
     """background task for regularly calling update"""
