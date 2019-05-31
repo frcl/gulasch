@@ -285,9 +285,9 @@ def card(event: Dict[str, object], col_width: int) -> Generator[str, None, None]
     yield empty_line
 
 
-# =======================
-# Updata Mechanism (TODO)
-# =======================
+# ================
+# Updata Mechanism
+# ================
 
 
 async def update():
@@ -406,14 +406,17 @@ async def start_background_tasks(app):
 if __name__ == '__main__':
     import argparse
     argp = argparse.ArgumentParser()
-    # argp.add_argument('-f', '--data-file', default='data.json')
+    argp.add_argument('-f', '--data-file', help='JSON file with talk data, '
+                                                'diables automatic updates')
     argp.add_argument('-p', '--port', default=80)
     args = argp.parse_args()
-    # with open(args.data_file) as jfile:
-        # DATA['locations'], DATA['events'] = normalize(json.load(jfile))
 
     app = web.Application()
-    app.on_startup.append(start_background_tasks)
+    if args.data_file:
+        with open(args.data_file) as jfile:
+            DATA['locations'], DATA['events'] = normalize(json.load(jfile))
+    else:
+        app.on_startup.append(start_background_tasks)
     app.add_routes([web.get('/gulasch/help', usage),
                     web.get('/gulasch/meta', handle_meta_request),
                     web.get('/gulasch/', handle_gulasch_request),
