@@ -2,6 +2,7 @@
 import asyncio
 import json  # for decoding 'fahrplan.json'
 import random # for randomizing time between updates
+import re
 import sys  # for meta information
 import textwrap  # for wraping text in event cards
 from datetime import datetime, timedelta
@@ -326,6 +327,13 @@ def err_repsonse(msg):
                         content_type='text/plain')
 
 
+def gulasch_response(text, from_dt, user_agent):
+    response_text = GULASCH_TEMPL.format(start=from_dt, table=text)
+    if any(browser in user_agent for browser in ('Chrome', 'Safari', 'Mozilla')):
+        response_text = re.sub('\033\[[0-9;]+m', '', response_text)
+    return web.Response(text=response_text, content_type='text/plain')
+
+
 def parse_delta(td_str):
     if td_str.endswith('h'):
         return int(td_str[:-1])*60
@@ -365,9 +373,8 @@ async def handle_gulasch_request(request):
     display_format = request.query.get('format', 'timetable')
 
     if display_format == 'timetable':
-        table = timetable(events)
-        resp = web.Response(text=GULASCH_TEMPL.format(start=from_dt, table=table),
-                            content_type='text/plain')
+        event_list = timetable(events)
+        resp = gulasch_response(event_list, from_dt, request.headers['user-agent'])
     elif display_format == 'list':
         table = ''.join('* \033[33m{:%H:%M}\033[0m {}{}, {}; {}\n'
                         .format(ev.start, ev['title'],
@@ -375,8 +382,7 @@ async def handle_gulasch_request(request):
                                 ', '.join(ev['speakers']),
                                 ev['language'])
                         for ev in events)
-        resp = web.Response(text=GULASCH_TEMPL.format(start=from_dt, table=table),
-                            content_type='text/plain')
+        resp = gulasch_response(table, from_dt, request.headers['user-agent'])
     elif display_format == 'json':
         resp = web.json_response([e.data for e in events])
     else:
@@ -396,7 +402,7 @@ async def handle_meta_request(request):
 
 
 async def usage(request):
-    return web.Response(text=HELP_TEXT, content_type='text/html')
+    return web.Response(text=HELP_TEXT, content_type='text/plain')
 
 
 async def start_background_tasks(app):
