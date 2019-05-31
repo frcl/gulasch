@@ -44,6 +44,10 @@ HELP_TEXT = """Basic usage:
 
     curl frcl.de/gulasch
 
+Different column width:
+
+    frcl.de/gulasch?colwidth=15
+
 Different formats:
 
     frcl.de/gulasch?format=list
