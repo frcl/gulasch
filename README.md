@@ -35,6 +35,6 @@ For example all events on day 2 starting at noon:
 
 If you want to run the server on your own machine, clone the git repository and run
 
-	pipenv run python gulaschkanone.py -f data.json -p 8080
+	pipenv run python gulaschkanone.py -p 8080
 
 You can then find the Fahrplan under `localhost:8080/gulasch`.
