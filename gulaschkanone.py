@@ -14,7 +14,7 @@ import aiohttp
 from aiohttp import web, ClientSession
 
 
-__version__ = 'v0.3.2'
+__version__ = 'v0.3.3'
 
 
 # =========
