@@ -70,6 +70,33 @@ GULASCH_TEMPL = """\033[33;1mNext talks from {start:%Y-%m-%d %H:%M}\033[0m\n
 For usage info see \033[33mhttp://frcl.de/gulasch/help\033[0m
 Found a bug? Open an issue at \033[33mhttps://github.com/frcl/gulasch\033[0m
 """
+CSS = """body {
+    background: black;
+    color: #bbbbbb;
+}
+pre {
+    font-family: Courier New,Courier,Lucida Sans Typewriter,Lucida Typewriter,monospace;
+    font-size: 70%;
+}
+"""
+HTML_TEMPL = """<html>
+<head>
+<style type="text/css">
+{css}
+</style>
+</head>
+<body>
+Next talks from {start:%Y-%m-%d %H:%M}
+
+<pre>
+{table}
+</pre>
+
+For usage info see <a href="http://frcl.de/gulasch/help">http://frcl.de/gulasch/help</a>
+<br>
+Found a bug? Open an issue at <a href="https://github.com/frcl/gulasch">https://github.com/frcl/gulasch</a>
+</body>
+"""
 
 
 # ====================
@@ -328,10 +355,14 @@ def err_repsonse(msg):
 
 
 def gulasch_response(text, from_dt, user_agent):
-    response_text = GULASCH_TEMPL.format(start=from_dt, table=text)
     if any(browser in user_agent for browser in ('Chrome', 'Safari', 'Mozilla')):
-        response_text = re.sub('\033\[[0-9;]+m', '', response_text)
-    return web.Response(text=response_text, content_type='text/plain')
+        response_text = re.sub('\033\[[0-9;]+m', '', text)
+        response_text = HTML_TEMPL.format(start=from_dt, table=response_text,
+                                          css=CSS)
+        return web.Response(text=response_text, content_type='text/html')
+    else:
+        response_text = GULASCH_TEMPL.format(start=from_dt, table=text)
+        return web.Response(text=response_text, content_type='text/plain')
 
 
 def parse_delta(td_str):
