@@ -14,7 +14,7 @@ import aiohttp
 from aiohttp import web, ClientSession
 
 
-__version__ = 'v0.3.3'
+__version__ = 'v0.4.0'
 
 
 # =========
@@ -404,7 +404,11 @@ async def handle_gulasch_request(request):
     display_format = request.query.get('format', 'timetable')
 
     if display_format == 'timetable':
-        event_list = timetable(events)
+        try:
+            col_width = int(request.query.get('colwidth', '20'))
+        except ValueError:
+            return err_repsonse(f'invalid integer in colwidth')
+        event_list = timetable(events, col_width=col_width)
         resp = gulasch_response(event_list, from_dt, request.headers['user-agent'])
     elif display_format == 'list':
         table = ''.join('* \033[33m{:%H:%M}\033[0m {}{}, {}; {}\n'
